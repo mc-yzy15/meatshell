@@ -146,6 +146,10 @@ pub fn run() -> Result<()> {
     crate::i18n::apply_to_slint();
     window.set_lang_en(crate::i18n::is_en());
 
+    // Theme mode is stored in config; actual theme switching UI is in Slint.
+    // The set-theme callback will persist the choice.
+    let _theme_mode = store.borrow().theme();
+
     let sessions_model: Rc<VecModel<SessionInfo>> = Rc::new(VecModel::default());
     window.set_sessions(ModelRc::from(sessions_model.clone()));
     sync_sessions_to_model(&store.borrow(), &sessions_model);
@@ -228,6 +232,16 @@ pub fn run() -> Result<()> {
                 w.set_lang_en(crate::i18n::is_en());
                 w.invoke_refresh_sidebar();
             }
+        });
+    }
+
+    // Switch theme at runtime.
+    {
+        let store = store.clone();
+        window.on_set_theme(move |mode: SharedString| {
+            let mut s = store.borrow_mut();
+            s.set_theme(mode.to_string());
+            let _ = s.save();
         });
     }
 

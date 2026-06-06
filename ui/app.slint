@@ -97,6 +97,7 @@ export component AppWindow inherits Window {
     callback open-download-dir();            // reveal the folder in the OS
     callback clear-transfers();              // wipe the transfer history
     callback set-language(string);           // switch UI language ("zh" / "en")
+    callback set-theme(string);              // switch theme ("dark" / "light" / "system")
 
     // --- Session list ------------------------------------------------------
     in property <[SessionInfo]> sessions;
@@ -572,6 +573,32 @@ export component AppWindow inherits Window {
                            color: Theme.text-secondary; font-size: Theme.fs-sm;
                            vertical-alignment: center; }
                     Text { text: root.lang-en ? "切换到中文" : "Switch to English";
+                           color: Theme.text-primary; font-size: Theme.fs-md;
+                           vertical-alignment: center; horizontal-stretch: 1; }
+                }
+            }
+            // Theme toggle: cycle dark -> light -> system -> dark
+            Rectangle {
+                height: 28px;
+                border-radius: Theme.radius-sm;
+                background: theme-ta.has-hover ? Theme.bg-hover : transparent;
+                theme-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.settings-open = false;
+                        // Cycle: dark -> light -> system -> dark
+                        let next = Theme.mode == "dark" ? "light" :
+                                   Theme.mode == "light" ? "system" : "dark";
+                        root.set-theme(next);
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: 8px; spacing: 8px;
+                    Text { text: "\u{E1BD}"; font-family: "Material Icons"; // brightness/light_mode
+                           color: Theme.text-secondary; font-size: Theme.fs-sm;
+                           vertical-alignment: center; }
+                    Text { text: Theme.mode == "dark" ? @tr("深色主题") :
+                                  Theme.mode == "light" ? @tr("浅色主题") : @tr("跟随系统");
                            color: Theme.text-primary; font-size: Theme.fs-md;
                            vertical-alignment: center; horizontal-stretch: 1; }
                 }
