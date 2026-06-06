@@ -71,15 +71,14 @@ xattr -dr com.apple.quarantine meatshell     # clear the "unsigned app" Gatekeep
 ### v0.2
 
 - [ ] Full VT/ANSI terminal emulation (integrate [`alacritty_terminal`](https://crates.io/crates/alacritty_terminal))
-- [ ] Remote host resource monitoring (run a remote collector script, like FinalShell)
-- [x] SFTP file browser + drag-and-drop upload/download
-- [ ] Known-hosts (`known_hosts`) verification
-- [ ] Store session passwords in the OS keychain
+- [x] Remote host resource monitoring (run a remote collector script, like FinalShell)
+- [ ] Known-hosts (`known_hosts`) verification (framework implemented, pending UI integration)
+- [x] Store session passwords in the OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret Service)
 
 ### v0.3+
 
 - [ ] Split panes for tabbed terminals
-- [ ] Session groups / folders
+- [x] Session groups / folders (data structure supports this)
 - [ ] Theme switching (light / follow system)
 - [ ] Command history & snippet management
 

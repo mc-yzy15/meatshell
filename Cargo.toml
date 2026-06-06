@@ -41,6 +41,13 @@ zeroize = "1"
 # (HTTP CONNECT proxies are handled in src/proxy.rs without an extra crate.)
 tokio-socks = "0.5"
 base64 = "0.22"
+sha2 = "0.10"
+dirs = "6"
+keyring = { version = "3", optional = true }
+
+[features]
+default = ["keyring-storage"]
+keyring-storage = ["dep:keyring"]
 
 [build-dependencies]
 slint-build = "1.8"

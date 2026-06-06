@@ -6,6 +6,7 @@
 mod app;
 mod config;
 mod i18n;
+mod known_hosts;
 mod proxy;
 mod sftp;
 mod ssh;
