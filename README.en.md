@@ -79,7 +79,7 @@ xattr -dr com.apple.quarantine meatshell     # clear the "unsigned app" Gatekeep
 
 - [ ] Split panes for tabbed terminals
 - [x] Session groups / folders (data structure supports this)
-- [ ] Theme switching (light / follow system)
+- [x] Theme switching (dark / light / follow system)
 - [ ] Command history & snippet management
 
 ## Tech stack
