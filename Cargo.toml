@@ -48,6 +48,10 @@ keyring = { version = "3", optional = true }
 [features]
 default = ["keyring-storage"]
 keyring-storage = ["dep:keyring"]
+# Cross-platform serial port access for the Serial session type (#14, #17).
+# Opens COM3 / /dev/ttyUSB0 etc.; on Linux the default `libudev` feature is
+# used for port enumeration (CI installs libudev-dev).
+serialport = "4"
 
 [build-dependencies]
 slint-build = "1.8"
