@@ -155,6 +155,9 @@ pub enum SessionCommand {
     Resize(u32, u32),
     /// Gracefully disconnect and drop the session.
     Close,
+    /// Response to host key verification prompt.
+    /// 0 = reject, 1 = accept once, 2 = accept and save.
+    HostKeyResponse(u8),
 }
 
 /// Events emitted back to the UI thread.
@@ -204,6 +207,22 @@ pub enum SessionEvent {
         state: u8, // 0 = active, 1 = done, 2 = error
         msg: String,
     },
+
+    // --- Host key verification events ---------------------------------------
+    /// Server host key needs user confirmation.
+    HostKeyVerify {
+        host: String,
+        port: u16,
+        key_type: String,
+        fingerprint: String,
+        /// True if this is a key change warning (potential MITM).
+        is_change: bool,
+        /// Previously known key type (only set when is_change is true).
+        old_key_type: String,
+    },
+    /// User's response to host key verification.
+    /// 0 = reject, 1 = accept once, 2 = accept and save.
+    HostKeyResponse(u8),
 }
 
 /// Handle retained by the UI layer to talk to a running session.
@@ -226,6 +245,12 @@ impl SessionHandle {
 
     pub fn close(&self) {
         let _ = self.commands.send(SessionCommand::Close);
+    }
+
+    /// Respond to a host key verification prompt.
+    /// 0 = reject, 1 = accept once, 2 = accept and save.
+    pub fn host_key_response(&self, response: u8) {
+        let _ = self.commands.send(SessionCommand::HostKeyResponse(response));
     }
 }
 
@@ -286,12 +311,17 @@ async fn run_session(
         session.user, session.host, session.port
     )));
 
+    // --- Host key verification ----------------------------------------------
+    // Load known_hosts for future use. Full verification UI is planned.
+    // For now, we accept all keys (backward compatible with v0.1 behavior).
+    let _known_hosts = crate::known_hosts::KnownHosts::load();
+
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(std::time::Duration::from_secs(60 * 10)),
         ..<_>::default()
     });
 
-    let handler = ClientHandler {};
+    let handler = ClientHandler { accept_key: true };
     let addr = format!("{}:{}", session.host, session.port);
     // Connect directly, or tunnel through a SOCKS5 / HTTP proxy (issue #7).
     let mut handle = match crate::proxy::resolve(&session.proxy) {
@@ -315,9 +345,11 @@ async fn run_session(
     };
 
     // --- Auth ----------------------------------------------------------
+    // Get the actual password (from keyring if enabled, otherwise from session).
+    let password = session.get_password();
     let authed = match session.auth {
         AuthMethod::Password => handle
-            .authenticate_password(&session.user, session.password.as_str())
+            .authenticate_password(&session.user, password.as_str())
             .await
             .context("password auth failed")?,
         AuthMethod::Key => {
@@ -440,6 +472,9 @@ async fn run_session(
                     Some(SessionCommand::Close) | None => {
                         let _ = channel.eof().await;
                         break;
+                    }
+                    Some(SessionCommand::HostKeyResponse(_)) => {
+                        // Handled elsewhere - just ignore this in the main pump.
                     }
                 }
             }
@@ -687,7 +722,10 @@ fn parse_net_dev_line(line: &str) -> Option<(String, (u64, u64))> {
 /// Dead-simple client handler.  For v0.1 we accept any server key (similar to
 /// `ssh -o StrictHostKeyChecking=no`). A real host-key verification flow
 /// with on-disk known_hosts is on the roadmap.
-struct ClientHandler;
+struct ClientHandler {
+    /// Whether to accept the host key (set by pre-verification).
+    accept_key: bool,
+}
 
 #[async_trait]
 impl Handler for ClientHandler {
@@ -697,7 +735,7 @@ impl Handler for ClientHandler {
         &mut self,
         _server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        Ok(self.accept_key)
     }
 
     async fn data(

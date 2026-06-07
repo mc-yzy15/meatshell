@@ -195,9 +195,11 @@ async fn run_sftp(
     };
 
     // --- Authenticate (same method as the shell session) -------------------
+    // Get the actual password (from keyring if enabled, otherwise from session).
+    let password = session.get_password();
     let authed = match session.auth {
         AuthMethod::Password => handle
-            .authenticate_password(&session.user, session.password.as_str())
+            .authenticate_password(&session.user, password.as_str())
             .await
             .context("sftp password auth failed")?,
         AuthMethod::Key => {

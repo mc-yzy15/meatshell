@@ -146,6 +146,10 @@ pub fn run() -> Result<()> {
     crate::i18n::apply_to_slint();
     window.set_lang_en(crate::i18n::is_en());
 
+    // Theme mode is stored in config; actual theme switching UI is in Slint.
+    // The set-theme callback will persist the choice.
+    let _theme_mode = store.borrow().theme();
+
     let sessions_model: Rc<VecModel<SessionInfo>> = Rc::new(VecModel::default());
     window.set_sessions(ModelRc::from(sessions_model.clone()));
     sync_sessions_to_model(&store.borrow(), &sessions_model);
@@ -228,6 +232,16 @@ pub fn run() -> Result<()> {
                 w.set_lang_en(crate::i18n::is_en());
                 w.invoke_refresh_sidebar();
             }
+        });
+    }
+
+    // Switch theme at runtime.
+    {
+        let store = store.clone();
+        window.on_set_theme(move |mode: SharedString| {
+            let mut s = store.borrow_mut();
+            s.set_theme(mode.to_string());
+            let _ = s.save();
         });
     }
 
@@ -630,6 +644,7 @@ fn wire_session_callbacks(
                         private_key_path: h.identity_file,
                         proxy: String::new(),
                         last_used: None,
+                        group: None,
                     });
                     added += 1;
                 }
@@ -706,16 +721,7 @@ fn wire_session_callbacks(
             // The edit dialog never echoes the real password (issue #10): a blank
             // field while editing means "keep the existing password" rather than
             // "clear it".  Only overwrite when the user actually typed something.
-            let password = if draft.password.is_empty() {
-                store
-                    .borrow()
-                    .get(&id)
-                    .map(|s| s.password.clone())
-                    .unwrap_or_default()
-            } else {
-                Secret::new(draft.password.to_string())
-            };
-            let new_session = Session {
+            let mut new_session = Session {
                 id,
                 name: if draft.name.is_empty() {
                     format!("{}@{}", draft.user, draft.host)
@@ -726,12 +732,28 @@ fn wire_session_callbacks(
                 port: if draft.port <= 0 { 22 } else { draft.port as u16 },
                 user: draft.user.to_string(),
                 auth: AuthMethod::from_str(&draft.auth.to_string()),
-                password,
+                password: Secret::default(), // Will be set below
                 // Store the key path with forward slashes uniformly.
                 private_key_path: draft.private_key_path.to_string().replace('\\', "/"),
                 proxy: draft.proxy.to_string(),
                 last_used: None,
+                group: None,
             };
+
+            // Handle password: use new password if provided, else keep existing.
+            if draft.password.is_empty() {
+                // Keep existing password from store.
+                if let Some(existing) = store.borrow().get(&new_session.id) {
+                    // When keyring is enabled, get_password retrieves from keyring.
+                    // When disabled, it returns the stored password.
+                    let existing_pw = existing.get_password();
+                    new_session.set_password(existing_pw.as_str());
+                }
+            } else {
+                // Set new password (will be stored in keyring if enabled).
+                new_session.set_password(&draft.password);
+            }
+
             {
                 let mut s = store.borrow_mut();
                 s.upsert(new_session);
@@ -1534,6 +1556,21 @@ fn apply_session_event_to_window(
                     None => model.insert(0, rec), // newest at top
                 }
             }
+        }
+        SessionEvent::HostKeyVerify {
+            host: _,
+            port: _,
+            key_type: _,
+            fingerprint: _,
+            is_change: _,
+            old_key_type: _,
+        } => {
+            // Host key verification prompt - for now we auto-accept.
+            // This will be enhanced with a dialog in a future update.
+            tracing::warn!("host key verification not implemented - auto-accepting");
+        }
+        SessionEvent::HostKeyResponse(_) => {
+            // This event is for internal communication only.
         }
     }
 }

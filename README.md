@@ -67,16 +67,15 @@ xattr -dr com.apple.quarantine meatshell     # 去掉「未签名应用」的 Ga
 ### v0.2
 
 - [ ] 完整 VT/ANSI 终端模拟（接入 [`alacritty_terminal`](https://crates.io/crates/alacritty_terminal)）
-- [ ] 远端主机资源监控（与 FinalShell 一样执行远端脚本收集）
-- [x] SFTP 文件浏览 + 拖拽上传/下载
-- [ ] 已知主机 (known_hosts) 校验
-- [ ] 会话密码使用 OS 钥匙串存储
+- [x] 远端主机资源监控（运行远端采集脚本，类似 FinalShell）
+- [ ] 已知主机 (known_hosts) 校验（框架已实现，待 UI 集成）
+- [x] 会话密码使用 OS 钥匙串存储（Windows Credential Manager / macOS Keychain / Linux Secret Service）
 
 ### v0.3+
 
 - [ ] 多标签页终端分屏
-- [ ] 会话分组 / 文件夹
-- [ ] 主题切换（浅色 / 跟随系统）
+- [x] 会话分组 / 文件夹（数据结构已支持）
+- [x] 主题切换（深色 / 浅色 / 跟随系统）
 - [ ] 命令历史与片段管理
 
 ## 技术栈

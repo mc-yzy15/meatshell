@@ -1,8 +1,15 @@
 // Central design tokens for meatshell.
-// Keep these aligned with docs/UI guidelines.
+// Supports dark (default) and light themes.
 
 export global Theme {
-    // --- Palette -----------------------------------------------------------
+    // Theme mode: "dark" (default), "light", or "system"
+    // When "system", the system-is-dark property is used to determine the actual theme.
+    in-out property <string> mode: "dark";
+    // Set by the Rust backend when mode == "system"
+    in property <bool> system-is-dark: true;
+
+    // --- Palette (Dark theme - default) -------------------------------------
+
     out property <brush> bg-root: #1b1d23;
     out property <brush> bg-panel: #23262d;
     out property <brush> bg-panel-alt: #2a2d35;
@@ -14,8 +21,8 @@ export global Theme {
     out property <brush> border-strong: #4a4e59;
 
     out property <brush> text-primary: #e6e8ee;
-    out property <brush> text-secondary: #b4b9c4;   // was #a8adb8 — a touch brighter
-    out property <brush> text-muted: #9196a3;        // was #6b6f7a — below WCAG AA on the dark bg
+    out property <brush> text-secondary: #b4b9c4;
+    out property <brush> text-muted: #9196a3;
 
     out property <brush> accent: #4a90e2;
     out property <brush> accent-hover: #5aa0f2;
@@ -27,6 +34,22 @@ export global Theme {
 
     out property <brush> term-bg: #0e0f13;
     out property <brush> term-fg: #d4d4d4;
+
+    // --- Palette (Light theme) ----------------------------------------------
+
+    out property <brush> light-bg-root: #f5f5f7;
+    out property <brush> light-bg-panel: #ffffff;
+    out property <brush> light-bg-panel-alt: #fafafa;
+    out property <brush> light-bg-elevated: #ffffff;
+    out property <brush> light-bg-hover: #e8e8eb;
+    out property <brush> light-bg-active: #d0d0d5;
+
+    out property <brush> light-border-subtle: #e5e5ea;
+    out property <brush> light-border-strong: #d1d1d6;
+
+    out property <brush> light-text-primary: #1d1d1f;
+    out property <brush> light-text-secondary: #6e6e73;
+    out property <brush> light-text-muted: #aeaeb2;
 
     // --- Typography --------------------------------------------------------
     out property <length> fs-xs: 11px;

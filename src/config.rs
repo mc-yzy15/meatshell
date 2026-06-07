@@ -3,8 +3,9 @@
 //! Persists a simple JSON file under the platform's standard config dir
 //! (e.g. `%APPDATA%/meatshell/sessions.json` on Windows).
 //!
-//! The password field is stored in plain text for v0.1; a proper OS keychain
-//! integration is tracked for a later iteration.
+//! Passwords are stored in the OS keychain when the `keyring-storage` feature
+//! is enabled. The JSON file stores a reference key instead of the plaintext
+//! password.
 
 use std::fs;
 use std::path::PathBuf;
@@ -14,6 +15,10 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use zeroize::Zeroize;
+
+// ---------------------------------------------------------------------------
+// Secret type with memory zeroing
+// ---------------------------------------------------------------------------
 
 /// A secret string (e.g. a session password) whose heap buffer is zeroed when
 /// it is dropped, so plaintext credentials don't survive in freed memory and
@@ -29,9 +34,6 @@ impl Secret {
     }
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
     }
 }
 
@@ -60,6 +62,91 @@ impl<'de> Deserialize<'de> for Secret {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Keyring password storage
+// ---------------------------------------------------------------------------
+
+/// Service name used for keyring entries.
+const KEYRING_SERVICE: &str = "meatshell";
+
+/// Generate the keyring entry key for a session.
+fn keyring_key(session_id: &str) -> String {
+    format!("session/{}", session_id)
+}
+
+/// Store a password in the OS keyring.
+#[cfg(feature = "keyring-storage")]
+fn store_password(session_id: &str, password: &str) -> Result<()> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, &keyring_key(session_id))
+        .context("create keyring entry")?;
+    entry.set_password(password).context("store password in keyring")?;
+    tracing::debug!("password stored in keyring for session {}", session_id);
+    Ok(())
+}
+
+/// Retrieve a password from the OS keyring.
+#[cfg(feature = "keyring-storage")]
+fn get_password(session_id: &str) -> Option<String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, &keyring_key(session_id)).ok()?;
+    match entry.get_password() {
+        Ok(pw) => {
+            tracing::debug!("password retrieved from keyring for session {}", session_id);
+            Some(pw)
+        }
+        Err(keyring::Error::NoEntry) => {
+            tracing::debug!("no keyring entry for session {}", session_id);
+            None
+        }
+        Err(e) => {
+            tracing::warn!("keyring error for session {}: {}", session_id, e);
+            None
+        }
+    }
+}
+
+/// Delete a password from the OS keyring.
+#[cfg(feature = "keyring-storage")]
+fn delete_password(session_id: &str) -> Result<()> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, &keyring_key(session_id))
+        .context("create keyring entry for deletion")?;
+    match entry.delete_credential() {
+        Ok(()) => {
+            tracing::debug!("password deleted from keyring for session {}", session_id);
+            Ok(())
+        }
+        Err(keyring::Error::NoEntry) => {
+            // Already gone, that's fine.
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!("keyring delete error for session {}: {}", session_id, e);
+            Err(anyhow::anyhow!("keyring delete error: {}", e))
+        }
+    }
+}
+
+// Non-keyring fallback: passwords stored in JSON (insecure, for dev/testing).
+#[cfg(not(feature = "keyring-storage"))]
+fn store_password(_session_id: &str, _password: &str) -> Result<()> {
+    // Password will be stored in JSON directly (handled by caller).
+    Ok(())
+}
+
+#[cfg(not(feature = "keyring-storage"))]
+fn get_password(_session_id: &str) -> Option<String> {
+    // Password should be in JSON.
+    None
+}
+
+#[cfg(not(feature = "keyring-storage"))]
+fn delete_password(_session_id: &str) -> Result<()> {
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Authentication method
+// ---------------------------------------------------------------------------
+
 /// How a session authenticates.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -84,6 +171,10 @@ impl AuthMethod {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Session
+// ---------------------------------------------------------------------------
+
 /// A single saved SSH target.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -93,6 +184,8 @@ pub struct Session {
     pub port: u16,
     pub user: String,
     pub auth: AuthMethod,
+    /// Password for password auth. When `keyring-storage` is enabled, this
+    /// field is empty in the JSON file; the actual password is in the keyring.
     #[serde(default)]
     pub password: Secret,
     #[serde(default)]
@@ -103,6 +196,9 @@ pub struct Session {
     pub proxy: String,
     #[serde(default)]
     pub last_used: Option<String>,
+    /// Group/folder name for organizing sessions.
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 impl Session {
@@ -118,9 +214,54 @@ impl Session {
             private_key_path: String::new(),
             proxy: String::new(),
             last_used: None,
+            group: None,
         }
     }
+
+    /// Get the actual password, checking keyring first.
+    pub fn get_password(&self) -> Secret {
+        // Try keyring first (if enabled).
+        if let Some(pw) = get_password(&self.id) {
+            return Secret::new(pw);
+        }
+        // Fall back to stored password (for backward compatibility or non-keyring builds).
+        self.password.clone()
+    }
+
+    /// Set the password, storing in keyring if enabled.
+    pub fn set_password(&mut self, password: &str) {
+        #[cfg(feature = "keyring-storage")]
+        {
+            if !password.is_empty() {
+                if let Err(e) = store_password(&self.id, password) {
+                    tracing::warn!("failed to store password in keyring: {}", e);
+                    // Fall back to storing in the struct (will be serialized to JSON).
+                    self.password = Secret::new(password);
+                    return;
+                }
+                // Clear the in-memory password so it doesn't get serialized to JSON.
+                self.password = Secret::default();
+            } else {
+                // Empty password - clear both keyring and struct.
+                let _ = delete_password(&self.id);
+                self.password = Secret::default();
+            }
+        }
+        #[cfg(not(feature = "keyring-storage"))]
+        {
+            self.password = Secret::new(password);
+        }
+    }
+
+    /// Delete the password from keyring (called when session is deleted).
+    pub fn clear_password(&self) {
+        let _ = delete_password(&self.id);
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Config file and store
+// ---------------------------------------------------------------------------
 
 /// On-disk layout. Keep additive to ease forward-compat.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -133,6 +274,9 @@ pub struct ConfigFile {
     /// UI language code: "zh" (default) or "en".
     #[serde(default)]
     pub language: String,
+    /// Theme mode: "dark" (default), "light", or "system".
+    #[serde(default)]
+    pub theme: String,
 }
 
 pub struct ConfigStore {
@@ -189,7 +333,23 @@ impl ConfigStore {
         &mut self.cache.sessions
     }
 
-    pub fn upsert(&mut self, session: Session) {
+    pub fn upsert(&mut self, mut session: Session) {
+        // If updating an existing session, migrate password if needed.
+        if let Some(existing) = self
+            .cache
+            .sessions
+            .iter()
+            .find(|s| s.id == session.id)
+        {
+            // If the new session has an empty password but the old one had one,
+            // and we're now using keyring, migrate the old password.
+            #[cfg(feature = "keyring-storage")]
+            if session.password.as_str().is_empty() && !existing.password.as_str().is_empty() {
+                // Old password was in JSON, migrate to keyring.
+                session.set_password(existing.password.as_str());
+            }
+        }
+
         if let Some(existing) = self
             .cache
             .sessions
@@ -203,6 +363,10 @@ impl ConfigStore {
     }
 
     pub fn remove(&mut self, id: &str) {
+        // Delete password from keyring before removing the session.
+        if let Some(session) = self.cache.sessions.iter().find(|s| s.id == id) {
+            session.clear_password();
+        }
         self.cache.sessions.retain(|s| s.id != id);
     }
 
@@ -229,6 +393,19 @@ impl ConfigStore {
 
     pub fn set_language(&mut self, lang: String) {
         self.cache.language = lang;
+    }
+
+    /// Theme mode ("dark" default / "light" / "system").
+    pub fn theme(&self) -> &str {
+        if self.cache.theme.is_empty() {
+            "dark"
+        } else {
+            &self.cache.theme
+        }
+    }
+
+    pub fn set_theme(&mut self, theme: String) {
+        self.cache.theme = theme;
     }
 
     pub fn save(&self) -> Result<()> {
